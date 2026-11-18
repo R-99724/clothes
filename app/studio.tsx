@@ -4,15 +4,17 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import {
   ArrowDownToLine, ArrowLeft, ArrowRight, ArrowUpRight, Bookmark, Check, ChevronRight,
   CircleHelp, ScanLine, ImagePlus, Images, Layers3, LoaderCircle, MessageSquare, Plus, Search,
-  Send, Shirt, SlidersHorizontal, Sparkles, Upload, UserRound, X,
+  Send, Shirt, SlidersHorizontal, Sparkles, Upload, UserRound, Video, X,
 } from "lucide-react";
+import LiveFitting from "./live-fitting";
 import {
   api, downloadImage, example, imageData, initialData, localStudio, readImage,
   type Garment, type StudioData,
 } from "./studio-data";
 
 const pages = [
-  { id: "try-on", name: "虚拟试穿", icon: ScanLine, group: "工作台" },
+  { id: "try-on", name: "照片试穿", icon: ScanLine, group: "工作台" },
+  { id: "live", name: "实时试穿", icon: Video, group: "工作台" },
   { id: "design", name: "对话设计", icon: MessageSquare, group: "工作台" },
   { id: "wardrobe", name: "参考衣橱", icon: Bookmark, group: "我的风格" },
   { id: "preferences", name: "风格偏好", icon: SlidersHorizontal, group: "我的风格" },
@@ -58,7 +60,7 @@ export default function Studio() {
   const [data, setData] = useState<StudioData>(initialData);
   const [loaded, setLoaded] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
-  const [capabilities, setCapabilities] = useState<{ design: boolean; tryOn: boolean } | null>(null);
+  const [capabilities, setCapabilities] = useState<{ design: boolean; tryOn: boolean; live: boolean } | null>(null);
   const [person, setPerson] = useState<Photo | null>(null);
   const [garment, setGarment] = useState<Photo | null>(null);
   const [result, setResult] = useState<{ image: string; demo: boolean } | null>(null);
@@ -70,7 +72,7 @@ export default function Studio() {
   const [referenceIds, setReferenceIds] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [preferenceDraft, setPreferenceDraft] = useState("");
-  const [picker, setPicker] = useState<"reference" | "try-on" | null>(null);
+  const [picker, setPicker] = useState<"reference" | "try-on" | "live" | null>(null);
   const [editor, setEditor] = useState<Garment | null>(null);
   const [help, setHelp] = useState(false);
   const [tryPanel, setTryPanel] = useState<"result" | "compare">("result");
@@ -94,7 +96,7 @@ export default function Studio() {
       setData(saved);
       setPreferenceDraft(saved.preference);
     }).catch(() => setNotice({ text: "无法读取浏览器里的作品。", error: true })).finally(() => setLoaded(true));
-    api<{ design: boolean; tryOn: boolean }>("status").then(setCapabilities).catch(() => {});
+    api<{ design: boolean; tryOn: boolean; live: boolean }>("status").then(setCapabilities).catch(() => {});
     return () => window.removeEventListener("hashchange", followHash);
   }, []);
 
@@ -131,12 +133,12 @@ export default function Studio() {
     }
   }
 
-  function useGarment(item: Garment) {
+  function useGarment(item: Garment, destination: "try-on" | "live" = "try-on") {
     if (running) return;
     setGarment({ image: item.image, name: item.name, source: item.id });
     clearResult();
     setPicker(null);
-    navigate("try-on");
+    navigate(destination);
   }
 
   function useExample() {
@@ -282,8 +284,8 @@ export default function Studio() {
               <div className="hero-copy">
                 <span className="hero-label"><Sparkles size={13} /> AI 虚拟试衣</span>
                 <h1 id="try-heading">先试穿，再决定。</h1>
-                <p>上传一张人像和一件衣服，看看它穿在你身上的样子。</p>
-                <button disabled={running} className="hero-button" onClick={useExample}>使用示例照片 <ArrowUpRight size={16} /></button>
+                <p>打开摄像头实时试衣，或上传照片生成试穿效果。</p>
+                <div className="hero-actions"><button className="primary" onClick={() => navigate("live")}><Video size={16} /> 摄像头试穿</button><button disabled={running} className="hero-button" onClick={useExample}>使用示例照片 <ArrowUpRight size={16} /></button></div>
               </div>
               <div className="hero-art">
                 <img src="/studio/fitting.jpg" alt="苔绿色亚麻外套试穿示例" />
@@ -326,6 +328,13 @@ export default function Studio() {
             </section>
           </>}
 
+          {page === "live" && <LiveFitting garment={garment} configured={capabilities?.live}>
+            <div className="panel-head"><span className="panel-icon"><Shirt size={17} /></span><div><h3>试穿服装</h3><p>{garment?.name ?? "上传或选一件衣服"}</p></div></div>
+            <UploadZone name="服装图片" photo={garment} icon={<ImagePlus size={22} />} onPick={(file) => setPhoto("garment", file)} onClear={() => { setGarment(null); clearResult(); }} />
+            <button className="panel-link" onClick={() => setPicker("live")}><Layers3 size={15} /> 从作品或衣橱选择 <ChevronRight size={14} /></button>
+            <button className="secondary live-example" disabled={running} onClick={() => useGarment(example, "live")}><Shirt size={16} /> 选用示例外套</button>
+          </LiveFitting>}
+
           {page === "design" && <>
             <div className="page-head"><div><h1>对话设计</h1><p>描述你想要的衣服，或在已有款式上继续改。</p></div><button className="secondary" disabled={designing || !selected} onClick={() => { chooseVersion(null); promptInput.current?.focus(); }}><Plus size={17} /> 设计新款</button></div>
             <div className="design-grid">
@@ -356,7 +365,7 @@ export default function Studio() {
               </section>
               <section className="panel design-preview">
                 <div className="panel-head"><span className="panel-icon"><Shirt size={17} /></span><div><h3>服装预览</h3><p>{selected?.name ?? "生成后可以切换和对比不同版本"}</p></div></div>
-                {selected ? <><img className="design-image" src={selected.image} alt={selected.name} /><div className="preview-actions"><button className="primary" onClick={() => useGarment(selected)} disabled={running}><Sparkles size={16} /> 用这件试穿</button><button className="secondary" onClick={() => setEditor(data.wardrobe.find(({ id }) => id === selected.id) ?? selected)}><Bookmark size={16} /> 加入衣橱</button></div></> :
+                {selected ? <><img className="design-image" src={selected.image} alt={selected.name} /><div className="preview-actions"><button className="primary" onClick={() => useGarment(selected)} disabled={running}><Sparkles size={16} /> 照片试穿</button><button className="secondary" disabled={running} onClick={() => useGarment(selected, "live")}><Video size={16} /> 实时试穿</button><button className="secondary" onClick={() => setEditor(data.wardrobe.find(({ id }) => id === selected.id) ?? selected)}><Bookmark size={16} /> 加入衣橱</button></div></> :
                   <div className="result-empty design-empty"><Images size={34} strokeWidth={1.2} /><strong>{designing ? "等待设计结果" : "还没有选中的服装"}</strong><small>从一次对话开始，或选择已有版本</small></div>}
                 {data.versions.length > 0 && <div className="versions" aria-label="服装版本">
                   {data.versions.map((item, index) => <button type="button" key={item.id} className={item.id === selected?.id ? "selected" : ""} aria-pressed={item.id === selected?.id} onClick={() => chooseVersion(item.id)}>
@@ -402,7 +411,7 @@ export default function Studio() {
 
       {picker && <Modal title={picker === "reference" ? "选择参考图" : "选择一件衣服"} onClose={() => setPicker(null)}>
         {picker === "reference" && data.wardrobe.length === 0 && <div className="modal-empty"><p>先把喜欢的服装加入参考衣橱。</p><button className="secondary" onClick={() => { setPicker(null); navigate("wardrobe"); }}>打开参考衣橱 <ArrowRight size={15} /></button></div>}
-        <div className="picker-grid">{(picker === "reference" ? data.wardrobe : savedItems).map((item) => <button className="picker-item" key={item.id} onClick={() => picker === "reference" ? addReference(item) : useGarment(item)}><img src={item.image} alt="" /><strong>{item.name}</strong>{item.note && <small>{item.note}</small>}</button>)}</div>
+        <div className="picker-grid">{(picker === "reference" ? data.wardrobe : savedItems).map((item) => <button className="picker-item" key={item.id} onClick={() => picker === "reference" ? addReference(item) : useGarment(item, picker)}><img src={item.image} alt="" /><strong>{item.name}</strong>{item.note && <small>{item.note}</small>}</button>)}</div>
       </Modal>}
       {editor && <Modal title="保存参考服装" onClose={() => setEditor(null)}>
         <form className="reference-editor" onSubmit={saveReference}>
@@ -421,7 +430,7 @@ export default function Studio() {
         </form>
       </Modal>}
       {help && <Modal title="使用说明" onClose={() => setHelp(false)}>
-        <div className="help-copy"><p><strong>虚拟试穿</strong>上传本人或已获授权的人像，再选择一件服装。也可以用示例照片体验对比和下载。</p><p><strong>对话设计</strong>用中文描述款式，生成后选中任意版本继续改，或直接把该款式送去试穿。</p><p><strong>参考衣橱</strong>保存喜欢的服装，注明想参考的细节，再从对话里引用。设计、收藏和偏好保存在当前浏览器。</p>{capabilities && (!capabilities.design || !capabilities.tryOn) && <p className="muted">当前可用服务 · 对话设计 {capabilities.design ? "已配置" : "待配置"} · 照片试穿 {capabilities.tryOn ? "已配置" : "待配置"}</p>}</div>
+        <div className="help-copy"><p><strong>实时试穿</strong>开启摄像头预览，选好服装后开始实时试穿。关闭摄像头或离开页面就会停止。</p><p><strong>照片试穿</strong>上传本人或已获授权的人像，再选择一件服装。也可以用示例照片体验对比和下载。</p><p><strong>对话设计</strong>用中文描述款式，生成后选中任意版本继续改，或直接把该款式送去试穿。</p><p><strong>参考衣橱</strong>保存喜欢的服装，注明想参考的细节，再从对话里引用。设计、收藏和偏好保存在当前浏览器。</p>{capabilities && (!capabilities.design || !capabilities.tryOn) && <p className="muted">当前可用服务 · 对话设计 {capabilities.design ? "已配置" : "待配置"} · 照片试穿 {capabilities.tryOn ? "已配置" : "待配置"}</p>}</div>
       </Modal>}
       {notice && <div className={`toast ${notice.error ? "toast-error" : ""}`} role="status">{notice.error ? <CircleHelp size={18} /> : <Check size={18} />}{notice.text}</div>}
     </div>

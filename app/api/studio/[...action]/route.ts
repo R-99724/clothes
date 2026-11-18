@@ -1,11 +1,13 @@
 import { env } from "cloudflare:workers";
 import { z } from "zod";
+import { liveModel, liveSessionSeconds } from "../../../live-config";
 
 const config = env as typeof env & {
   OPENAI_API_KEY?: string;
   OPENAI_TEXT_MODEL?: string;
   OPENAI_IMAGE_MODEL?: string;
   FASHN_API_KEY?: string;
+  DECART_API_KEY?: string;
 };
 
 const image = z.string().max(3_000_000)
@@ -164,13 +166,35 @@ async function fittingStatus(token: string, request: Request) {
   return json({ status: job.status || "processing" });
 }
 
+async function liveToken(origin: string) {
+  const key = requireKey(config.DECART_API_KEY, "DECART_API_KEY");
+  const response = await fetch("https://api.decart.ai/v1/client/tokens", {
+    method: "POST",
+    headers: { "X-API-KEY": key, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      expiresIn: 60, allowedModels: [liveModel], allowedOrigins: [origin],
+      constraints: { realtime: { maxSessionDuration: liveSessionSeconds } },
+    }),
+    signal: AbortSignal.timeout(12_000),
+  });
+  if (!response.ok) {
+    console.warn(`Decart token request returned HTTP ${response.status}`);
+    throw new ApiError(response.status === 429
+      ? "实时试穿服务繁忙或额度不足，请稍后重试。"
+      : "无法连接 Decart 实时试穿，请管理员检查账号和模型权限。", 502);
+  }
+  const token = z.object({ apiKey: z.string().min(1) }).safeParse(await response.json());
+  if (!token.success) throw new ApiError("实时试穿服务未返回有效凭据。", 502);
+  return json(token.data);
+}
+
 function actionFor(request: Request) {
   return new URL(request.url).pathname.split("/api/studio/")[1]?.replace(/\/$/, "");
 }
 
 export function GET(request: Request) {
   if (actionFor(request) !== "status") return json({ error: "找不到接口。" }, 404);
-  return json({ design: Boolean(config.OPENAI_API_KEY), tryOn: Boolean(config.FASHN_API_KEY) });
+  return json({ design: Boolean(config.OPENAI_API_KEY), tryOn: Boolean(config.FASHN_API_KEY), live: Boolean(config.DECART_API_KEY) });
 }
 
 export async function POST(request: Request) {
@@ -191,6 +215,7 @@ export async function POST(request: Request) {
     if (raw.length > allowedSize) throw new ApiError("图片过大。", 413);
     const body: unknown = JSON.parse(raw);
     switch (actionFor(request)) {
+      case "live/token": return await liveToken(url.origin);
       case "design": return await design(designInput.parse(body));
       case "try-on": return await submitFitting(fittingInput.parse(body), request);
       case "try-on/status": return await fittingStatus(statusInput.parse(body).token, request);
