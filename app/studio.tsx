@@ -2,11 +2,14 @@
 
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
-  ArrowDownToLine, ArrowLeft, ArrowRight, ArrowUpRight, Bookmark, Check, ChevronRight,
-  CircleHelp, ScanLine, ImagePlus, Images, Layers3, LoaderCircle, MessageSquare, Plus, Search,
+  ArrowDownToLine, ArrowLeft, ArrowRight, ArrowUpRight, Bookmark, Check, ChevronRight, Clapperboard,
+  CircleHelp, ScanLine, ImagePlus, Images, Layers3, LoaderCircle, MessageSquare, Plus, Search, Settings2,
   Send, Shirt, SlidersHorizontal, Sparkles, Upload, UserRound, Video, X,
 } from "lucide-react";
+import { UsagePanel } from "./usage-panel";
 import LiveFitting from "./live-fitting";
+import { SettingsPanel, VideoPanel } from "./provider-panels";
+import { type Provider, type Providers } from "./provider-settings";
 import {
   api, downloadImage, example, imageData, initialData, localStudio, readImage,
   type Garment, type StudioData,
@@ -16,10 +19,15 @@ const pages = [
   { id: "try-on", name: "照片试穿", icon: ScanLine, group: "工作台" },
   { id: "live", name: "实时试穿", icon: Video, group: "工作台" },
   { id: "design", name: "对话设计", icon: MessageSquare, group: "工作台" },
+  { id: "video", name: "视频生成", icon: Clapperboard, group: "工作台" },
   { id: "wardrobe", name: "参考衣橱", icon: Bookmark, group: "我的风格" },
   { id: "preferences", name: "风格偏好", icon: SlidersHorizontal, group: "我的风格" },
+  { id:"usage", name:"使用日志", icon:UserRound, group:"账号" },
+  { id:"billing", name:"用户与计费", icon:Settings2, group:"管理" },
+  { id: "settings", name: "接口设置", icon: Settings2, group: "管理" },
 ] as const;
 type Page = typeof pages[number]["id"];
+type Capabilities = { design: boolean; tryOn: boolean; live: boolean; video?: boolean; liveProvider?:Provider; prices?:{live:number}; local?: boolean };
 type Notice = { text: string; error?: boolean };
 type Photo = { image: string; name: string; source?: string };
 const examplePortrait = { image: "/studio/portrait.jpg", name: "示例人像" };
@@ -55,12 +63,13 @@ function UploadZone({ name, photo, icon, onPick, onClear }: {
   );
 }
 
-export default function Studio() {
+export default function Studio({ accountId, accountMenu, admin=false }: { admin?:boolean; accountId?: string; accountMenu?: ReactNode } = {}) {
   const [page, setPage] = useState<Page>("try-on");
   const [data, setData] = useState<StudioData>(initialData);
   const [loaded, setLoaded] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
-  const [capabilities, setCapabilities] = useState<{ design: boolean; tryOn: boolean; live: boolean } | null>(null);
+  const [capabilities, setCapabilities] = useState<Capabilities | null>(null)
+  const [localProviders, setLocalProviders] = useState<Providers>({});
   const [person, setPerson] = useState<Photo | null>(null);
   const [garment, setGarment] = useState<Photo | null>(null);
   const [result, setResult] = useState<{ image: string; demo: boolean } | null>(null);
@@ -91,18 +100,27 @@ export default function Studio() {
     };
     followHash();
     window.addEventListener("hashchange", followHash);
-    localStudio("load").then((saved) => {
+    localStudio("load", accountId).then((saved) => {
       if (!saved) return;
       setData(saved);
       setPreferenceDraft(saved.preference);
     }).catch(() => setNotice({ text: "无法读取浏览器里的作品。", error: true })).finally(() => setLoaded(true));
-    api<{ design: boolean; tryOn: boolean; live: boolean }>("status").then(setCapabilities).catch(() => {});
     return () => window.removeEventListener("hashchange", followHash);
-  }, []);
+  }, [accountId]);
 
   useEffect(() => {
-    if (loaded) localStudio("save", data).catch(() => setNotice({ text: "本次修改未能保存到浏览器。", error: true }));
-  }, [data, loaded]);
+    let active = true;
+    api<Capabilities>("status").then(status => {
+      if (!active) return;
+      setCapabilities(status);
+      setLocalProviders(status.liveProvider ? {live:status.liveProvider} : {});
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [accountId, page]);
+
+  useEffect(() => {
+    if (loaded) localStudio("save", accountId, data).catch(() => setNotice({ text: "本次修改未能保存到浏览器。", error: true }));
+  }, [data, loaded, accountId]);
 
   useEffect(() => {
     if (!notice) return;
@@ -251,6 +269,7 @@ export default function Studio() {
   }
 
   const active = pages.find((item) => item.id === page)!;
+  const visiblePages = pages.filter(({id}) => id==="settings" || id==="billing" ? capabilities?.local && admin : id==="usage" || id==="video" ? capabilities?.local : true);
   return (
     <div className="studio-shell">
       <aside className="sidebar">
@@ -259,9 +278,9 @@ export default function Studio() {
           <span><strong>衣样</strong><small>YIYANG STUDIO</small></span>
         </a>
         <nav aria-label="工作台导航">
-          {["工作台", "我的风格"].map((group) => <div className="nav-group" key={group}>
+          {Array.from(new Set(visiblePages.map(item=>item.group))).map((group) => <div className="nav-group" key={group}>
             <p>{group}</p>
-            {pages.filter((item) => item.group === group).map(({ id, name, icon: Icon }) =>
+            {visiblePages.filter((item) => item.group === group).map(({ id, name, icon: Icon }) =>
               <a className={page === id ? "nav-active" : ""} key={id} href={`#${id}`}
                 onClick={() => navigate(id)} aria-current={page === id ? "page" : undefined}>
                 <Icon size={18} strokeWidth={1.65} /><span>{name}</span>
@@ -276,7 +295,7 @@ export default function Studio() {
         <header className="topbar">
           <span className="breadcrumb">衣样工作室 <ChevronRight size={13} /><strong>{active.name}</strong></span>
           <button className="top-help icon-button" onClick={() => setHelp(true)} aria-label="使用说明"><CircleHelp size={19} /></button>
-          <span className="profile-icon" title="本机工作区"><UserRound size={16} /></span>
+          {accountMenu ?? <span className="profile-icon" title="本机工作区"><UserRound size={16} /></span>}
         </header>
         <div className="workspace">
           {page === "try-on" && <>
@@ -328,7 +347,7 @@ export default function Studio() {
             </section>
           </>}
 
-          {page === "live" && <LiveFitting garment={garment} configured={capabilities?.live}>
+          {page === "live" && <LiveFitting metered={capabilities?.local} rate={capabilities?.prices?.live} garment={garment} provider={localProviders.live} configured={capabilities?.local ? Boolean(localProviders.live) : capabilities?.live}>
             <div className="panel-head"><span className="panel-icon"><Shirt size={17} /></span><div><h3>试穿服装</h3><p>{garment?.name ?? "上传或选一件衣服"}</p></div></div>
             <UploadZone name="服装图片" photo={garment} icon={<ImagePlus size={22} />} onPick={(file) => setPhoto("garment", file)} onClear={() => { setGarment(null); clearResult(); }} />
             <button className="panel-link" onClick={() => setPicker("live")}><Layers3 size={15} /> 从作品或衣橱选择 <ChevronRight size={14} /></button>
@@ -393,6 +412,12 @@ export default function Studio() {
             </div>
           </>}
 
+          {page === "settings" && admin && capabilities?.local && <SettingsPanel onSave={setLocalProviders} />}
+          {capabilities?.local && (page==="usage" || (admin && page==="billing")) && <UsagePanel key={page} management={page==="billing"}/>}
+          {page === "video" && capabilities?.local && <VideoPanel image={selected?.image || garment?.image} />}
+          {(page === "settings" || page === "video") && capabilities && !capabilities.local &&
+            <div className="panel">这个页面可在「衣样」的独立部署中使用。</div>}
+
           {page === "preferences" && <>
             <div className="page-head"><div><h1>风格偏好</h1><p>记录你想长期沿用的审美。每次对话里的具体要求优先。</p></div></div>
             <form className="panel preferences" onSubmit={(event) => {
@@ -430,7 +455,7 @@ export default function Studio() {
         </form>
       </Modal>}
       {help && <Modal title="使用说明" onClose={() => setHelp(false)}>
-        <div className="help-copy"><p><strong>实时试穿</strong>开启摄像头预览，选好服装后开始实时试穿。关闭摄像头或离开页面就会停止。</p><p><strong>照片试穿</strong>上传本人或已获授权的人像，再选择一件服装。也可以用示例照片体验对比和下载。</p><p><strong>对话设计</strong>用中文描述款式，生成后选中任意版本继续改，或直接把该款式送去试穿。</p><p><strong>参考衣橱</strong>保存喜欢的服装，注明想参考的细节，再从对话里引用。设计、收藏和偏好保存在当前浏览器。</p>{capabilities && (!capabilities.design || !capabilities.tryOn) && <p className="muted">当前可用服务 · 对话设计 {capabilities.design ? "已配置" : "待配置"} · 照片试穿 {capabilities.tryOn ? "已配置" : "待配置"}</p>}</div>
+        <div className="help-copy"><p><strong>实时试穿</strong>开启摄像头预览，选好服装后开始实时试穿。关闭摄像头或离开页面就会停止。</p><p><strong>照片试穿</strong>上传本人或已获授权的人像，再选择一件服装。也可以用示例照片体验对比和下载。</p><p><strong>对话设计</strong>用中文描述款式，生成后选中任意版本继续改，或直接把该款式送去试穿。</p><p><strong>参考衣橱</strong>保存喜欢的服装，注明想参考的细节，再从对话里引用。设计、收藏和偏好保存在当前浏览器。</p>{capabilities && (!capabilities.design || !capabilities.tryOn) && <p className="muted">当前可用服务 · 对话设计 {(capabilities.design || localProviders.design) ? "已配置" : "待配置"} · 照片试穿 {(capabilities.tryOn || localProviders.photo) ? "已配置" : "待配置"}</p>}</div>
       </Modal>}
       {notice && <div className={`toast ${notice.error ? "toast-error" : ""}`} role="status">{notice.error ? <CircleHelp size={18} /> : <Check size={18} />}{notice.text}</div>}
     </div>

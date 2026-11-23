@@ -1,3 +1,5 @@
+import { providerRequest, studioFetch } from "./provider-settings";
+
 export type Garment = {
   id: string;
   name: string;
@@ -25,9 +27,9 @@ export const initialData: StudioData = {
   versions: [], wardrobe: [], messages: [], preference: "", selectedId: null,
 };
 
-export function localStudio(action: "load"): Promise<StudioData | undefined>;
-export function localStudio(action: "save", data: StudioData): Promise<undefined>;
-export async function localStudio(action: "load" | "save", data?: StudioData) {
+export function localStudio(action: "load", owner?: string): Promise<StudioData | undefined>;
+export function localStudio(action: "save", owner: string | undefined, data: StudioData): Promise<undefined>;
+export async function localStudio(action: "load" | "save", owner?: string, data?: StudioData) {
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open("yiyang-studio", 1);
     request.onupgradeneeded = () => request.result.createObjectStore("workspace");
@@ -38,7 +40,8 @@ export async function localStudio(action: "load" | "save", data?: StudioData) {
     return await new Promise<StudioData | undefined>((resolve, reject) => {
       const transaction = db.transaction("workspace", action === "save" ? "readwrite" : "readonly");
       const store = transaction.objectStore("workspace");
-      const request = action === "save" ? store.put(data, "studio") : store.get("studio");
+      const key = owner ? `studio-user-${owner}` : "studio";
+      const request = action === "save" ? store.put(data, key) : store.get(key);
       transaction.oncomplete = () => resolve(action === "load" ? request.result : undefined);
       transaction.onabort = () => reject(transaction.error);
     });
@@ -76,9 +79,7 @@ export async function imageData(image: string) {
 }
 
 export async function api<T>(path: string, body?: unknown): Promise<T> {
-  const response = await fetch(`/api/studio/${path}`, body === undefined ? undefined : {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-  });
+  const response = body === undefined ? await studioFetch(`/api/studio/${path}`) : await providerRequest(path, body);
   const result = await response.json() as T & { error?: string };
   if (!response.ok) throw new Error(result.error || "请求失败，请稍后重试。");
   return result;
