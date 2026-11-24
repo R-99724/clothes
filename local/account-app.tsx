@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { LoaderCircle, LogOut, ScanLine, ShieldCheck } from "lucide-react";
+import { LoaderCircle, LogOut, ShieldCheck } from "lucide-react";
 import Studio from "../app/studio";
 import { setStudioAccount } from "../app/provider-settings";
 
@@ -109,7 +109,7 @@ export default function AccountApp() {
 
   return <main className="auth-shell">
     <section className="panel auth-card">
-      <a className="auth-brand" href="/"><ScanLine size={22} /> 衣样 <span>YIYANG STUDIO</span></a>
+      <a className="auth-brand" href="/"><img src="/yiyang-logo.svg" width="32" height="32" alt="" /> 衣样 <span>YIYANG STUDIO</span></a>
       {state ? <>
         <h1>{title}</h1>
         <p className="muted">{action === "setup" ? "首次启动时创建管理员。初始化口令由启动终端提供。"

@@ -284,3 +284,6 @@ textarea { min-width: 0; padding: 10px; resize: vertical; }
 .usage-table { overflow:auto; }
 .usage-table table { width:100%; border-collapse:collapse; }
 .usage-table td,.usage-table th { padding:.5rem; text-align:left; border-bottom:1px solid var(--edge); }
+.brand-mark { border: 0; }
+.brand-mark img { width: 100%; height: auto; }
+[aria-pressed="true"].secondary { background: var(--pine); color: white; }

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-labelledby="title">
+  <title id="title">衣样 · 折叠布带</title>
+  <rect x="3" y="3" width="122" height="122" rx="28" fill="#f5efe3"/>
+    <path fill="#476854" d="M30 29h18l18 26-12 12Z"/>
+    <path fill="#214837" d="M59 61c8-8 13-19 8-24-3-3-10-3-17-2l-7-10c18-6 36-4 43 6 10 14-1 30-16 39l24 24-15 8-25-26Z"/>
+    <path fill="#214837" d="M55 58 67 48 58 99l-17 6Z"/>
+    <path fill="#94a28a" d="m55 58 12-10-4 18-9 10-4-5Z"/>
+    <path fill="#476854" d="m70 70 24 24-15 8-17-18Z"/>
+    
+</svg>

@@ -1,3 +1,4 @@
+import { openSharedWardrobe } from "./shared-wardrobe";
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID, scrypt, timingSafeEqual } from "node:crypto";
 import { linkSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -199,6 +200,7 @@ export function openAccounts(directory: string) {
   return {
     signingKey: createHmac("sha256",key).update("yiyang/photo-job/v1").digest("hex"),
     billing: openBilling(database),
+    wardrobe: openSharedWardrobe(database),
     sharedProviders() {
       const admin = database.prepare("SELECT id FROM users WHERE role='admin' ORDER BY created LIMIT 1").get();
       return admin ? getProviders({id:String(admin.id),role:"admin",username:""}) : {};

@@ -78,6 +78,11 @@ export default function Studio({ accountId, accountMenu, admin=false }: { admin?
   const [designing, setDesigning] = useState(false);
   const [designError, setDesignError] = useState("");
   const [draft, setDraft] = useState("");
+  const [sharedItems, setSharedItems] = useState<Garment[]>([]);
+  const [wardrobeTab, setWardrobeTab] = useState<"private" | "shared">("private");
+  const [wardrobeError, setWardrobeError] = useState("");
+  const [publicEditor, setPublicEditor] = useState(false);
+  const [wardrobeBusy, setWardrobeBusy] = useState(false);
   const [referenceIds, setReferenceIds] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [preferenceDraft, setPreferenceDraft] = useState("");
@@ -90,8 +95,8 @@ export default function Studio({ accountId, accountMenu, admin=false }: { admin?
   const promptInput = useRef<HTMLTextAreaElement>(null);
 
   const selected = data.versions.find((item) => item.id === data.selectedId);
-  const references = referenceIds.map((id) => data.wardrobe.find((item) => item.id === id)).filter((item): item is Garment => Boolean(item));
-  const savedItems = [...new Map([...data.versions, ...data.wardrobe, example].map((item) => [item.id, item])).values()];
+  const references = referenceIds.map((id) => [...data.wardrobe, ...sharedItems].find((item) => item.id === id)).filter((item): item is Garment => Boolean(item));
+  const savedItems = [...new Map([...data.versions, ...data.wardrobe, ...sharedItems, example].map((item) => [item.id, item])).values()];
 
   useEffect(() => {
     const followHash = () => {
@@ -245,10 +250,65 @@ export default function Studio({ accountId, accountMenu, admin=false }: { admin?
     navigate("design");
   }
 
+  async function refreshSharedWardrobe(signal?: AbortSignal) {
+    try {
+      const result = await api<{items: Omit<Garment, "image">[]}>("wardrobe");
+      if (!signal?.aborted) {
+        setSharedItems(result.items.map(item => ({...item, image: `/api/studio/wardrobe/photo/${item.id}`})));
+        setWardrobeError("");
+      }
+    } catch (failure) {
+      if (!signal?.aborted) setWardrobeError((failure as Error).message);
+    }
+  }
+
+  useEffect(() => {
+    if (!accountId || !capabilities?.local) return;
+    const controller = new AbortController();
+    void refreshSharedWardrobe(controller.signal);
+    return () => controller.abort();
+  }, [accountId, capabilities?.local, page]);
+
+  async function publishReference(item: Garment) {
+    setWardrobeBusy(true);
+    try {
+      const {name, tags, note, image} = item;
+      await api("admin/wardrobe/publish", {name, tags, note, image});
+      setEditor(null);
+      await refreshSharedWardrobe();
+      setNotice({text: "已发布到公共参考衣橱"});
+    } catch (failure) {
+      setNotice({text: (failure as Error).message, error: true});
+    } finally { setWardrobeBusy(false); }
+  }
+
+  async function removeShared(item: Garment) {
+    if (!window.confirm(`下架「${item.name}」？它将从公共衣橱移除。`)) return;
+    setWardrobeBusy(true);
+    try {
+      await api("admin/wardrobe/remove", {id:item.id});
+      setSharedItems(items => items.filter(({id}) => id !== item.id));
+      setNotice({text:"已下架公共参考图"});
+    } catch (failure) {
+      setNotice({text:(failure as Error).message,error:true});
+    } finally { setWardrobeBusy(false); }
+  }
+
+  async function saveSharedCopy(item: Garment) {
+    try {
+      const image = await imageData(item.image);
+      setPublicEditor(false);
+      setEditor({...item, id:crypto.randomUUID(), image});
+    } catch (failure) {
+      setNotice({text:(failure as Error).message,error:true});
+    }
+  }
+
   async function uploadReference(file: File) {
     try {
       const image = await readImage(file);
-      setEditor({ id: crypto.randomUUID(), name: file.name.replace(/\.[^.]+$/, ""), image, tags: "", note: "" });
+      setPublicEditor(wardrobeTab === "shared" && admin);
+      setEditor({ id: crypto.randomUUID(), name: file.name.replace(/\.[^.]+$/, "").slice(0,64), image, tags: "", note: "" });
     } catch (error) {
       setNotice({ text: (error as Error).message, error: true });
     }
@@ -256,9 +316,10 @@ export default function Studio({ accountId, accountMenu, admin=false }: { admin?
 
   function saveReference(event: FormEvent) {
     event.preventDefault();
-    if (!editor || !loaded) return;
+    if (!editor || !loaded || wardrobeBusy) return;
     const item = { ...editor, name: editor.name.trim() };
     if (!item.name) return;
+    if (publicEditor && admin) { void publishReference(item); return; }
     setData((current) => ({
       ...current, wardrobe: current.wardrobe.some(({ id }) => id === item.id)
         ? current.wardrobe.map((entry) => entry.id === item.id ? item : entry)
@@ -274,7 +335,7 @@ export default function Studio({ accountId, accountMenu, admin=false }: { admin?
     <div className="studio-shell">
       <aside className="sidebar">
         <a href="#try-on" className="brand" onClick={() => navigate("try-on")} aria-label="衣样首页">
-          <span className="brand-mark"><ScanLine size={25} strokeWidth={1.5} /></span>
+          <span className="brand-mark"><img src="/yiyang-logo.svg" width="42" height="42" alt="" /></span>
           <span><strong>衣样</strong><small>YIYANG STUDIO</small></span>
         </a>
         <nav aria-label="工作台导航">
@@ -384,7 +445,7 @@ export default function Studio({ accountId, accountMenu, admin=false }: { admin?
               </section>
               <section className="panel design-preview">
                 <div className="panel-head"><span className="panel-icon"><Shirt size={17} /></span><div><h3>服装预览</h3><p>{selected?.name ?? "生成后可以切换和对比不同版本"}</p></div></div>
-                {selected ? <><img className="design-image" src={selected.image} alt={selected.name} /><div className="preview-actions"><button className="primary" onClick={() => useGarment(selected)} disabled={running}><Sparkles size={16} /> 照片试穿</button><button className="secondary" disabled={running} onClick={() => useGarment(selected, "live")}><Video size={16} /> 实时试穿</button><button className="secondary" onClick={() => setEditor(data.wardrobe.find(({ id }) => id === selected.id) ?? selected)}><Bookmark size={16} /> 加入衣橱</button></div></> :
+                {selected ? <><img className="design-image" src={selected.image} alt={selected.name} /><div className="preview-actions"><button className="primary" onClick={() => useGarment(selected)} disabled={running}><Sparkles size={16} /> 照片试穿</button><button className="secondary" disabled={running} onClick={() => useGarment(selected, "live")}><Video size={16} /> 实时试穿</button><button className="secondary" onClick={() => {setPublicEditor(false);setEditor(data.wardrobe.find(({ id }) => id === selected.id) ?? selected);}}><Bookmark size={16} /> 加入衣橱</button></div></> :
                   <div className="result-empty design-empty"><Images size={34} strokeWidth={1.2} /><strong>{designing ? "等待设计结果" : "还没有选中的服装"}</strong><small>从一次对话开始，或选择已有版本</small></div>}
                 {data.versions.length > 0 && <div className="versions" aria-label="服装版本">
                   {data.versions.map((item, index) => <button type="button" key={item.id} className={item.id === selected?.id ? "selected" : ""} aria-pressed={item.id === selected?.id} onClick={() => chooseVersion(item.id)}>
@@ -396,20 +457,33 @@ export default function Studio({ accountId, accountMenu, admin=false }: { admin?
           </>}
 
           {page === "wardrobe" && <>
-            <div className="page-head"><div><h1>参考衣橱</h1><p>收藏喜欢的款式，注明想参考的配色、材质或版型。</p></div>
-              <button className="primary" onClick={() => wardrobeUpload.current?.click()}><Upload size={16} /> 上传参考图</button>
-              <input ref={wardrobeUpload} hidden type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadReference(file); event.target.value = ""; }} /></div>
+            <div className="page-head">
+              <div><h1>衣橱</h1><p>{wardrobeTab === "shared" ? "浏览全站共享的服装参考图。" : "收藏喜欢的款式，用标签和备注整理自己的衣橱。"} </p></div>
+              {(wardrobeTab === "private" || admin) && <button className="primary" disabled={wardrobeBusy} onClick={() => wardrobeUpload.current?.click()}><Upload size={16} /> {wardrobeTab === "shared" ? "上传公共参考图" : "上传私人参考图"}</button>}
+              <input ref={wardrobeUpload} hidden type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadReference(file); event.target.value = ""; }} />
+            </div>
+            {capabilities?.local && <div className="preview-actions" aria-label="切换衣橱">
+              <button className="secondary" aria-pressed={wardrobeTab === "private"} onClick={() => {setWardrobeTab("private");setQuery("");}}>我的私人衣橱</button>
+              <button className="secondary" aria-pressed={wardrobeTab === "shared"} onClick={() => {setWardrobeTab("shared");setQuery("");void refreshSharedWardrobe();}}>公共参考衣橱</button>
+            </div>}
+            {wardrobeTab === "shared" && wardrobeError && <p className="inline-error" role="alert">{wardrobeError}</p>}
             <label className="search"><Search size={18} /><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索名称、标签或备注" /></label>
             <div className="wardrobe-grid">
-              {data.wardrobe.filter((item) => `${item.name} ${item.tags} ${item.note}`.toLowerCase().includes(query.trim().toLowerCase())).map((item) => <article className="panel garment-tile" key={item.id}>
-                <img src={item.image} alt={item.name} /><h3>{item.name}</h3><p>{item.tags}</p>{item.note && <p className="reference-note">{item.note}</p>}
-                <div className="tile-actions"><button className="secondary small" onClick={() => addReference(item)}>引用到对话 <ArrowRight size={14} /></button><button className="text-button" onClick={() => setEditor(item)}>编辑</button></div>
+              {(wardrobeTab === "shared" ? sharedItems : data.wardrobe).filter(item => `${item.name} ${item.tags} ${item.note}`.toLowerCase().includes(query.trim().toLowerCase())).map(item => <article className="panel garment-tile" key={item.id}>
+                <img loading="lazy" src={item.image} alt={item.name} /><h3>{item.name}</h3><p>{item.tags}</p>{item.note && <p className="reference-note">{item.note}</p>}
+                <div className="tile-actions">
+                  <button className="secondary small" onClick={() => addReference(item)}>引用到对话</button>
+                  {wardrobeTab === "shared" ? <>
+                    <button className="text-button" onClick={() => void saveSharedCopy(item)}>收藏到私人衣橱</button>
+                    {admin && <button className="text-button danger" disabled={wardrobeBusy} onClick={() => void removeShared(item)}>下架</button>}
+                  </> : <button className="text-button" onClick={() => {setPublicEditor(false);setEditor(item);}}>编辑</button>}
+                </div>
               </article>)}
-              {!query.trim() && !data.wardrobe.some(({ id }) => id === example.id) && <article className="panel garment-tile">
-                <img src={example.image} alt={example.name} /><h3>{example.name}</h3><p>示例参考 · 亚麻 · 外套</p><div className="tile-actions"><button className="secondary small" onClick={() => setEditor(example)}><Bookmark size={14} /> 加入衣橱</button><button className="text-button" disabled={running} onClick={() => useGarment(example)}>试穿</button></div>
+              {wardrobeTab === "private" && !query.trim() && !data.wardrobe.some(({id}) => id === example.id) && <article className="panel garment-tile">
+                <img src={example.image} alt={example.name} /><h3>{example.name}</h3><p>示例参考 · 亚麻 · 外套</p><div className="tile-actions"><button className="secondary small" onClick={() => {setPublicEditor(false);setEditor(example);}}>加入私人衣橱</button><button className="text-button" disabled={running} onClick={() => useGarment(example)}>试穿</button></div>
               </article>}
-              {query.trim() && !data.wardrobe.some((item) => `${item.name} ${item.tags} ${item.note}`.toLowerCase().includes(query.trim().toLowerCase())) && <p className="muted">没有找到匹配的参考图。</p>}
             </div>
+            {wardrobeTab === "shared" && sharedItems.length === 0 && !wardrobeError && <p className="muted">公共衣橱暂无参考图。</p>}
           </>}
 
           {page === "settings" && admin && capabilities?.local && <SettingsPanel onSave={setLocalProviders} />}
@@ -435,8 +509,8 @@ export default function Studio({ accountId, accountMenu, admin=false }: { admin?
       </main>
 
       {picker && <Modal title={picker === "reference" ? "选择参考图" : "选择一件衣服"} onClose={() => setPicker(null)}>
-        {picker === "reference" && data.wardrobe.length === 0 && <div className="modal-empty"><p>先把喜欢的服装加入参考衣橱。</p><button className="secondary" onClick={() => { setPicker(null); navigate("wardrobe"); }}>打开参考衣橱 <ArrowRight size={15} /></button></div>}
-        <div className="picker-grid">{(picker === "reference" ? data.wardrobe : savedItems).map((item) => <button className="picker-item" key={item.id} onClick={() => picker === "reference" ? addReference(item) : useGarment(item, picker)}><img src={item.image} alt="" /><strong>{item.name}</strong>{item.note && <small>{item.note}</small>}</button>)}</div>
+        {picker === "reference" && data.wardrobe.length + sharedItems.length === 0 && <div className="modal-empty"><p>先把喜欢的服装加入参考衣橱。</p><button className="secondary" onClick={() => { setPicker(null); navigate("wardrobe"); }}>打开参考衣橱 <ArrowRight size={15} /></button></div>}
+        <div className="picker-grid">{(picker === "reference" ? [...data.wardrobe, ...sharedItems] : savedItems).map((item) => <button className="picker-item" key={item.id} onClick={() => picker === "reference" ? addReference(item) : useGarment(item, picker)}><img src={item.image} alt="" /><strong>{item.name}</strong>{item.note && <small>{item.note}</small>}</button>)}</div>
       </Modal>}
       {editor && <Modal title="保存参考服装" onClose={() => setEditor(null)}>
         <form className="reference-editor" onSubmit={saveReference}>
@@ -450,7 +524,7 @@ export default function Studio({ accountId, accountMenu, admin=false }: { admin?
               setReferenceIds((ids) => ids.filter((id) => id !== editor.id)); setEditor(null);
               setNotice({ text: "已从参考衣橱移除" });
             }}>从衣橱移除</button>}
-            <button className="primary" disabled={!editor.name.trim() || !loaded}>保存参考</button>
+            <button className="primary" disabled={!editor.name.trim() || !loaded || wardrobeBusy}>{publicEditor ? "发布到公共衣橱" : "保存到私人衣橱"}</button>
           </div>
         </form>
       </Modal>}

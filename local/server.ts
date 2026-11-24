@@ -108,6 +108,24 @@ async function serve(req: IncomingMessage, res: ServerResponse) {
     }
     const billing = accounts.billing;
     if ((action === "settings" || action.startsWith("admin/")) && user.role !== "admin") return jsonError(res,403,"需要管理员权限。");
+    if (action === "wardrobe" && req.method === "GET") {
+      return respond(res, 200, { items: accounts.wardrobe.list() });
+    }
+    if (action.startsWith("wardrobe/photo/") && req.method === "GET") {
+      const id = z.string().uuid().parse(action.slice("wardrobe/photo/".length));
+      const photo = accounts.wardrobe.photo(id);
+      if (!photo) return jsonError(res, 404, "参考图已下架。");
+      res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "private, no-store" });
+      return res.end(photo);
+    }
+    if (action === "admin/wardrobe/publish" && req.method === "POST") {
+      const id = accounts.wardrobe.publish(JSON.parse(await readBody(req, 2_010_000)));
+      return id ? respond(res, 201, { id }) : jsonError(res, 409, "公共衣橱已满，请先下架旧参考图。");
+    }
+    if (action === "admin/wardrobe/remove" && req.method === "POST") {
+      const { id } = z.object({ id: z.string().uuid() }).parse(JSON.parse(await readBody(req, 2048)));
+      return accounts.wardrobe.remove(id) ? respond(res, 200, { ok: true }) : jsonError(res, 404, "参考图已下架。");
+    }
     if (action === "admin/users" && req.method === "GET") return respond(res,200,{ users:billing.users() });
     if (action === "admin/balance" && req.method === "POST") {
       billing.adjust(user.id,JSON.parse(await readBody(req,2048))); return respond(res,200,{ok:true});
